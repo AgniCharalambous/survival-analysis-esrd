@@ -1,0 +1,331 @@
+# Survival Analysis of End-Stage Renal Disease Patients
+
+```yaml
+---
+  title: "Survival Analysis of End-Stage Renal Disease Patients"
+author: "Agni Charalambous"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+  toc: true
+toc_float: true
+toc_depth: 3
+theme: united
+highlight: tango
+number_sections: true
+pdf_document:
+  toc: true
+toc_depth: 3
+---
+  ```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Introduction
+
+This project was developed as part of postgraduate coursework in the MSc in Biostatistics and Health Data Science.
+
+The analysis investigates survival outcomes among end-stage renal disease (ESRD) patients receiving either conservative treatment or haemodialysis using classical and advanced survival analysis techniques in R.
+
+The project includes:
+  
+  * Descriptive statistical analysis
+* Kaplan-Meier survival estimation
+* Log-rank and Wilcoxon tests
+* Cox proportional hazards models
+* Assessment of proportional hazards assumptions
+* Time-dependent covariates
+* Piecewise Cox regression
+* Weibull survival modelling
+
+# Libraries
+
+```{r}
+library(survival)
+library(MASS)
+```
+
+# Data Preparation
+
+The dataset was imported and categorical variables were converted into factors for statistical analysis.
+
+```{r}
+esrd <- read.csv("esrd.csv", sep = ";")
+
+esrd$treatmnt <- factor(esrd$treatmnt,
+                        levels = c(0, 1),
+                        labels = c("Conservative", "Haemodialysis"))
+
+esrd$sex <- factor(esrd$sex,
+                   levels = c("F", "M"),
+                   labels = c("Female", "Male"))
+
+esrd$copd <- factor(esrd$copd,
+                    levels = c(0, 1),
+                    labels = c("No", "Yes"))
+
+esrd$dm <- factor(esrd$dm,
+                  levels = c(0, 1),
+                  labels = c("No", "Yes"))
+
+esrd$hypert <- factor(esrd$hypert,
+                      levels = c(0, 1),
+                      labels = c("No", "Yes"))
+
+esrd$heart <- factor(esrd$heart,
+                     levels = c(0, 1),
+                     labels = c("No", "Yes"))
+
+esrd$liver <- factor(esrd$liver,
+                     levels = c(0, 1),
+                     labels = c("No", "Yes"))
+
+esrd$neoplasia <- factor(esrd$neoplasia,
+                         levels = c(0, 1),
+                         labels = c("No", "Yes"))
+
+esrd$vascular <- factor(esrd$vascular,
+                        levels = c(0, 1),
+                        labels = c("No", "Yes"))
+```
+
+## Data Quality Checks
+
+The dataset was screened for missing values and invalid survival times.
+
+```{r}
+str(esrd)
+
+sapply(esrd[, c("treatmnt", "dthtime", "sex", "copd", "dm",
+                "hypert", "heart", "liver", "neoplasia",
+                "vascular", "dth")],
+       function(x) sum(is.na(x)))
+
+summary(esrd$dthtime)
+
+sum(esrd$dthtime < 0, na.rm = TRUE)
+```
+
+# Descriptive Statistics
+
+Descriptive analyses were conducted to summarize baseline characteristics and compare treatment groups.
+
+```{r}
+table(esrd$sex)
+round(100 * prop.table(table(esrd$sex)), 2)
+
+table(esrd$treatmnt)
+round(100 * prop.table(table(esrd$treatmnt)), 2)
+
+table(esrd$dth)
+round(100 * prop.table(table(esrd$dth)), 2)
+
+mean(esrd$age)
+sd(esrd$age)
+
+mean(esrd$dthtime)
+sd(esrd$dthtime)
+```
+
+## Group Comparisons
+
+Chi-square tests and t-tests were used to evaluate differences between treatment groups.
+
+```{r}
+chisq.test(table(esrd$treatmnt, esrd$sex))
+chisq.test(table(esrd$treatmnt, esrd$copd))
+chisq.test(table(esrd$treatmnt, esrd$dm))
+chisq.test(table(esrd$treatmnt, esrd$hypert))
+
+t.test(age ~ treatmnt, data = esrd)
+t.test(dthtime ~ treatmnt, data = esrd)
+```
+
+# Risk Estimation
+
+Cumulative incidence proportions and risk ratios were estimated for both treatment groups.
+
+```{r}
+n_con <- sum(esrd$treatmnt == "Conservative")
+d_con <- sum(esrd$treatmnt == "Conservative" & esrd$dth == "1")
+
+n_hd <- sum(esrd$treatmnt == "Haemodialysis")
+d_hd <- sum(esrd$treatmnt == "Haemodialysis" & esrd$dth == "1")
+
+p_con <- d_con / n_con
+p_hd <- d_hd / n_hd
+
+round(100 * c(conservative = p_con,
+              haemodialysis = p_hd), 2)
+
+prop.test(x = c(d_hd, d_con),
+          n = c(n_hd, n_con))
+```
+
+# Mortality Rates
+
+Mortality rates per person-year were estimated using Poisson methods.
+
+```{r}
+py_by_group <- tapply(esrd$dthtime,
+                      esrd$treatmnt,
+                      sum)
+
+deaths_by_group <- tapply(esrd$dth,
+                          esrd$treatmnt,
+                          sum)
+
+mr_by_group <- deaths_by_group / py_by_group
+
+poisson.test(deaths_by_group,
+             py_by_group)
+```
+
+# Kaplan-Meier Survival Analysis
+
+Kaplan-Meier survival curves were estimated for each treatment group.
+
+```{r}
+esrd.fit <- survfit(Surv(dthtime, dth) ~ treatmnt,
+                    data = esrd)
+
+plot(esrd.fit,
+     mark.time = FALSE,
+     main = "Kaplan-Meier Survival Curves",
+     ylab = "Survival Probability",
+     xlab = "Time (years)",
+     lty = 1:2,
+     col = c("black", "red"))
+
+legend("topright",
+       lty = 1:2,
+       col = c("black", "red"),
+       legend = c("Conservative", "Haemodialysis"),
+       bty = "n")
+```
+
+## Survival Curve Comparisons
+
+Log-rank and Wilcoxon tests were used to compare survival distributions.
+
+```{r}
+survdiff(Surv(dthtime, dth) ~ treatmnt,
+         data = esrd)
+
+survdiff(Surv(dthtime, dth) ~ treatmnt,
+         data = esrd,
+         rho = 1)
+```
+
+# Cox Proportional Hazards Models
+
+## Univariate Cox Model
+
+```{r}
+cox_treat <- coxph(Surv(dthtime, dth) ~ treatmnt,
+                   data = esrd)
+
+summary(cox_treat)
+```
+
+## Proportional Hazards Assumption
+
+The proportional hazards assumption was evaluated using graphical methods and Schoenfeld residuals.
+
+```{r}
+plot(esrd.fit,
+     mark.time = FALSE,
+     fun = "cloglog",
+     main = "Assessment of the Proportional Hazards Assumption",
+     xlab = "Time (years)",
+     ylab = "log(-log(Survival))",
+     lty = 1:2,
+     col = c("blue", "red"))
+
+cox.zph(cox_treat)
+```
+
+# Time-Dependent Covariates
+
+A Cox model with time-dependent treatment effects was fitted.
+
+```{r}
+esrd$trt_num <- 1 * (esrd$treatmnt == "Haemodialysis")
+
+fit_tdc <- coxph(
+  Surv(dthtime, dth) ~ trt_num + tt(trt_num),
+  data = esrd,
+  tt = function(x, t, ...) {x * t}
+)
+
+summary(fit_tdc)
+```
+
+# Piecewise Cox Regression
+
+Piecewise Cox regression was used to allow treatment effects to vary across time intervals.
+
+```{r}
+cuts <- c(1, 3)
+
+esrd_split <- survSplit(
+  Surv(dthtime, dth) ~ .,
+  data = esrd,
+  cut = cuts,
+  episode = "interval",
+  zero = -1
+)
+
+esrd_split$interval <- factor(
+  esrd_split$interval,
+  labels = c("0-1", "1-3", ">=3")
+)
+
+fit_piecewise <- coxph(
+  Surv(tstart, dthtime, dth) ~ treatmnt * interval,
+  data = esrd_split
+)
+
+summary(fit_piecewise)
+```
+
+# Multivariable Cox Regression
+
+A multivariable Cox proportional hazards model was fitted including demographic and clinical covariates.
+
+```{r}
+cox_mult <- coxph(
+  Surv(dthtime, dth) ~
+    treatmnt + age + sex + copd + dm + hypert +
+    heart + liver + neoplasia + vascular,
+  data = esrd
+)
+
+summary(cox_mult)
+```
+
+# Weibull Survival Model
+
+Parametric survival analysis was performed using Weibull regression models.
+
+```{r}
+esrd$dthtime_fixed <- esrd$dthtime
+
+esrd$dthtime_fixed[esrd$dthtime_fixed <= 0] <- 0.001
+
+fit_weibull <- survreg(
+  Surv(dthtime_fixed, dth) ~ 1,
+  data = esrd,
+  dist = "weibull"
+)
+
+summary(fit_weibull)
+```
+
+# Conclusion
+
+This project demonstrates the application of classical and advanced survival analysis techniques in the evaluation of treatment outcomes among end-stage renal disease patients.
+
+The analysis included non-parametric, semi-parametric, and parametric survival modelling approaches using R. The project provided practical experience in statistical modelling, survival analysis methodology, model diagnostics, and interpretation of healthcare-related data.
